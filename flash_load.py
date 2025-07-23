@@ -66,8 +66,13 @@ class FlashLoad(PamirSerial):
             self.bitstream = read_file_content["data"]
             return read_file_content
 
-    def write_to_flash(self, image_type: Literal["golden", "operation"] = "operation"):
+    def write_to_flash(self, file_name: str ,image_type: Literal["golden","operation"]="operation"):
         return_dict = {"status": True, "msg": None}
+        if file_name:
+            load_res = self.load_bitstream_file(file_name)
+            if not load_res["status"]:
+                return load_res
+
         if not hasattr(self, "bitstream"):
             return_dict["status"] = False
             return_dict["msg"] = "Valid bitstream is not loaded."
@@ -93,9 +98,9 @@ class FlashLoad(PamirSerial):
             try:
                 self.flash_erase(erase_addr)
                 start = time.time()
-                while self.flash_read_status() & 0x01:  #check flash status
+                while self.flash_read_status() & 0x01:  # check flash status
                     if time.time() - start > 10:
-                        raise TimeoutError
+                        raise TimeoutError("Flash busy > 10 s during erase")
                     time.sleep(0.05)
             except TimeoutError:
                 return_dict["status"] = False
@@ -130,12 +135,20 @@ class FlashLoad(PamirSerial):
             try:
                 self.flash_write(write_addr, page)
                 start = time.time()
-                while self.flash_read_status() & 0x01:  # 轮询 WIP
-                    if time.time() - start > 10:  # <<< 新增：10 s 超时
-                        raise TimeoutError("Flash stays busy for >10 s, aborting")
+                while self.flash_read_status() & 0x01:  # check flash status
+                    if time.time() - start > 10:
+                        raise TimeoutError("Flash busy > 10 s during writing")
                     time.sleep(0.05)
+            except TimeoutError:
+                return_dict["status"] = False
+                return_dict["msg"] = "Flash stays busy for > 10 s, aborting"
+                return return_dict
             except Exception as e:
                 print(f"Write failed at {hex(write_addr)}: {e}")
+                return_dict["status"] = False
+                return_dict["msg"] = f"Write error at 0x{write_addr:08X}"
+                return return_dict
+
 
             write_addr += 0x100  # Move to next 256-byte page
 
