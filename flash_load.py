@@ -1,6 +1,7 @@
 import time
 import os
 import sys
+import serial
 from typing import Literal
 
 from serial_commport.Pamir_serial_basic import PamirSerial
@@ -13,54 +14,177 @@ class FlashLoad(PamirSerial):
     @staticmethod
     def read_binary_to_hex(filename, max_bytes=256) -> dict:
         return_dict = {"status": True, "msg": None}
+        hex_pages = []
         try:
             with open(filename, 'rb') as f:
-                data = f.read(max_bytes)  # Read up to max_bytes to avoid memory issues
-                hex_str = data.hex()  # Convert bytes to hex string
-                return_dict["data"] = hex_str
+                while True:
+                    data = f.read(max_bytes)
+                    if not data:
+                        break
+                    hex_pages.append(data.hex())
+                return_dict["data"] = hex_pages
                 return return_dict
         except FileNotFoundError:
-            return_dict["status": False, "msg": "Error: File not found"]
+            return_dict["status"] = False
+            return_dict["msg"] = "Error: File not found"
         except Exception as e:
-            return_dict["status": False, "msg": f"Error: {str(e)}"]
+            return_dict["status"] = False
+            return_dict["msg"] = f"Error: {str(e)}"
         return return_dict
 
-    def load_bitstream_file(self, file_name: str):
+    def load_bitstream_file(self, file_name: str, max_size_bytes=0xF50000):
         # check if extension provided in the file name
+        if '.' not in file_name:
+            return {"status": False, "msg": "No file extension provided."}
         # check if correct extensions
+        allowed_exts = [".bit", ".bin" , ".txt"]
+        _, ext = os.path.splitext(file_name)
+        if ext.lower() not in allowed_exts:
+            return {"status": False, "msg": f"Unsupported file extension: {ext}. Allowed extensions: {', '.join(allowed_exts)}"}
+
+        if not os.path.isfile(file_name):
+            return {"status": False, "msg": "Error: File not found."}
+
+        # check size of the file
+        file_size = os.path.getsize(file_name)
+        if file_size > max_size_bytes:
+            return {"status": False,
+                "msg": f"Error: File too large ({file_size} bytes). Max allowed is {max_size_bytes} bytes."
+            }
+        print(f"Size of the file：{file_size} bytes")
+
         read_file_content = self.read_binary_to_hex(file_name)
         if not read_file_content["status"]:
             return read_file_content
         else:
-            # check file size
             # check syncronisation code "AA995566" exists, etc.,
-            self.bitstream = read_file_content["data"]
-            pass
 
-    def write_to_flash(self, image_type=Literal["golden","operation"]):
+            # with open(file_name, 'rb') as f:
+            #     header = f.read(4).hex()
+            #     if header.lower() != "aa995566":
+            #         return {"status": False, "msg": f"Missing synchronisation code AA995566. First 4 bytes:{header.lower()}"}
+            self.bitstream = read_file_content["data"]
+            return read_file_content
+
+    def write_to_flash(self, image_type: Literal["golden", "operation"] = "operation"):
         return_dict = {"status": True, "msg": None}
         if not hasattr(self, "bitstream"):
-            return_dict["status": False]
-            return_dict["msg": "Valid bitstream is not loaded."]
-            return
+            return_dict["status"] = False
+            return_dict["msg"] = "Valid bitstream is not loaded."
+            return return_dict
+
         # check image_type
-        # check file length
+        if image_type == "golden":
+            base_address = 0x00000000
+            max_address = 0x00F50000
+        elif image_type == "operation":
+            base_address = 0x01000000
+            max_address = 0x01F50000
+        else:
+            return_dict["status"] = False
+            return_dict["msg"] = "Invalid image_type. Use 'golden' or 'operation'."
+            return return_dict
 
         # Erase loop
-        while True:
-            # generating start address based on image_type
-            #addr = 0x01000000 / 0x0000000
-            #0x00000000 -> 0x00FFFFFF /4k
-            #self._erase()
-            #self.get_flash_status()
-            break
+        print("Erasing sectors...")
+        self.flash_write_enable()
+        for erase_addr in range(base_address, max_address, 0x10000):
+            print(f"Erasing sector at 0x{erase_addr:08X}")
+            try:
+                self.flash_erase(erase_addr)
+                start = time.time()
+                while self.flash_read_status() & 0x01:  #check flash status
+                    if time.time() - start > 10:
+                        raise TimeoutError
+                    time.sleep(0.05)
+            except TimeoutError:
+                return_dict["status"] = False
+                return_dict["msg"] = "Flash stays busy for > 10 s, aborting"
+                return return_dict
+            except Exception as e:
+                print(f"Erase failed at {hex(erase_addr)}: {e}")
+                return_dict["status"] = False
+                return_dict["msg"] = f"Erase error at 0x{erase_addr:08X}"
+                return return_dict
+
+        self.flash_write_disable()
+
 
         # Write loop
-        while True:
-            #page = file_content[0, -1, 256]
-            #self._write(self.page, addr)
-            break
+        print("Writing data pages...")
+        write_addr = base_address
+        self.flash_write_enable()
+        for idx, hex_page in enumerate(self.bitstream):
+            if write_addr >= max_address:
+                print("Warning: Write exceeds assigned flash region.")
+                break
+
+            # hex to str
+            page_bytes = bytes.fromhex(hex_page)
+            page = list(page_bytes)
+
+            if len(page) < 256:
+                page += [0xFF] * (256 - len(page))  # Pad incomplete page
+
+            print(f"Writing page {idx + 1}/{len(self.bitstream)} at 0x{write_addr:08X}")
+            try:
+                self.flash_write(write_addr, page)
+                start = time.time()
+                while self.flash_read_status() & 0x01:  # 轮询 WIP
+                    if time.time() - start > 10:  # <<< 新增：10 s 超时
+                        raise TimeoutError("Flash stays busy for >10 s, aborting")
+                    time.sleep(0.05)
+            except Exception as e:
+                print(f"Write failed at {hex(write_addr)}: {e}")
+
+            write_addr += 0x100  # Move to next 256-byte page
+
+        self.flash_write_disable()
+        return_dict["msg"] = "Successfully written to flash."
+        return return_dict
+
         
-    def read_from_flash(self, image_type=Literal["golden","operation"]):
-        pass
-        
+    def read_from_flash(self, image_type: Literal["golden","operation"], save_to_file: str = True):
+
+        if image_type == "golden":
+            base_address = 0x00000000
+            max_address = 0x00F50000
+        elif image_type == "operation":
+            base_address = 0x01000000
+            max_address = 0x01F50000
+        else:
+            return {"status": False, "msg": "Invalid image_type. Use 'golden' or 'operation'."}
+        print("Reading flash pages...")
+
+        read_addr = base_address
+        pages = []
+
+        while read_addr < max_address:
+            try:
+                page = self.flash_read(read_addr)
+                pages.append(page)
+                print(f"Read 256B page from 0x{read_addr:08X}, {page}") # print the address and data
+            except Exception as e:
+                print(f" Read failed at 0x{read_addr:08X}: {e}")
+                return {"status": False, "msg": f"Read error at {hex(read_addr)}"}
+
+            read_addr += 0x100
+
+        # save in a new file
+        if save_to_file is True:
+            file_path = f"{image_type}_read_back.txt"
+            try:
+                with open(file_path, 'w') as f:
+                    for page in pages:
+                        hex_str = ''.join(f"{b:02x}" for b in page)
+                        f.write(hex_str + "\n")
+                print(f"Flash content saved to: {file_path}")
+            except Exception as e:
+                return {"status": False, "msg": f"Failed to save file: {str(e)}"}
+            return {"status": True, "msg": f"Read {len(pages)} pages and saved to {file_path}", "data": pages}
+        return {"status": True, "msg": f"Read {len(pages)}", "data": pages}
+
+
+
+
+
