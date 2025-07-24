@@ -157,7 +157,7 @@ class FlashLoad(PamirSerial):
         return return_dict
 
         
-    def read_from_flash(self, image_type: Literal["golden","operation"], save_to_file: str = True):
+    def read_from_flash(self, image_type: Literal["golden","operation"], save_to_file: bool = True):
 
         if image_type == "golden":
             base_address = 0x00000000
@@ -184,7 +184,7 @@ class FlashLoad(PamirSerial):
             read_addr += 0x100
 
         # save in a new file
-        if save_to_file is True:
+        if save_to_file:
             file_path = f"{image_type}_read_back.txt"
             try:
                 with open(file_path, 'w') as f:
