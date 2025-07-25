@@ -5,7 +5,7 @@ import serial
 import logging
 from typing import Literal
 
-from serial_commport.Pamir_serial_basic import PamirSerial
+from serialcommport.Pamir_serial_basic import PamirSerial
 
 # It turns out "flash_erase", "flash_write", "flash_read" has been provided by [Meenu S]
 # You would want to override them and potentially encapsulate them
@@ -15,7 +15,7 @@ FLASH_ADDRBASE_GOLDEN = 0x00000000
 FLASH_ADDRBASE_OPERATION = 0x01000000
 IMAGE_MAX_SIZE_BYTES = FLASH_ADDRBASE_OPERATION
 FLASH_WIP_TIMEOUT_SEC = 10.0
-FLASH_POLL_INTERVAL_SEC = 0.05
+FLASH_POLL_INTERVAL_SEC = 0.001
 FPGA_BITSTREAM_SYNC_WORD = (
     "AA995566"  # 4 bytes sync word at the start of the bitstream file
 )
@@ -77,7 +77,7 @@ class FlashLoad(PamirSerial):
                 "status": False,
                 "msg": f"Error: File too large ({file_size} bytes). Max allowed is {IMAGE_MAX_SIZE_BYTES} bytes.",
             }
-        print(f"Size of the file：{file_size} bytes")
+        print(f"Size of the file: {file_size} bytes")
 
         return_dict = self.read_binary_to_hex(file_name)
         if not return_dict["status"]:
