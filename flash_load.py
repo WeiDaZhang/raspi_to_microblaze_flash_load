@@ -16,6 +16,7 @@ FLASH_BASE_OPERATION_BYTES = 0x01000000
 FLASH_MAX_OPERATION_BYTES = 0x01F50000
 FLASH_WIP_TIMEOUT_SEC   = 10.0
 FLASH_POLL_INTERVAL_SEC = 0.05
+EXPECTED_FLASH_ID = "20bb19"
 
 class FlashLoad(PamirSerial):
     @staticmethod
@@ -199,6 +200,26 @@ class FlashLoad(PamirSerial):
             return {"status": True, "msg": f"Read {len(pages)} pages and saved to {file_path}", "data": pages}
         return {"status": True, "msg": f"Read {len(pages)}", "data": pages}
 
+    def read_flash_id(self):
+        """
+        Returns {"status": bool, "hex": str, "msg": str}
+        """
+        try:
+            raw_id = self.flash_read_id()
+        except Exception as exc:
+            return {"status": False, "msg": f"Read-ID command failed: {exc}"}
+
+        jedec_id = raw_id & 0xFFFFFF
+        hex_id   = f"{jedec_id:06x}"
+
+        if hex_id != EXPECTED_FLASH_ID:
+            return {"status": False,
+                    "hex": hex_id,
+                    "msg": f"Wrong board detected (ID {hex_id} ≠ {EXPECTED_FLASH_ID})"}
+
+        return {"status": True,
+                "hex": hex_id,
+                "msg": f"Flash ID OK: {hex_id}"}
 
 
 
