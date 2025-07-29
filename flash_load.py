@@ -278,7 +278,7 @@ class FlashLoad(PamirSerial):
     def read_image_from_flash(
         self,
         image_type: Literal["golden", "operation"],
-        length: int = 0,
+        length: int = 0,  # Length in bytes, 0 means maximum image size
         events: dict[str:Event] = None,
         status_queue: Queue = None,
     ):
@@ -370,6 +370,7 @@ class FlashLoad(PamirSerial):
         self,
         image_type: Literal["golden", "operation"],
         operation_type: Literal["write", "read"],
+        read_length: int = 0,  # Length in bytes for read operation, ignored in write operation
         events: dict[str:Event] = None,
         status_queue: Queue = None,
     ):
@@ -396,7 +397,7 @@ class FlashLoad(PamirSerial):
             )
         elif operation_type == "read":
             self.operation_thread = self.read_image_from_flash(
-                image_type, events, status_queue
+                image_type, read_length, events, status_queue
             )
         else:
             raise ValueError("Invalid operation_type. Use 'write' or 'read'.")
