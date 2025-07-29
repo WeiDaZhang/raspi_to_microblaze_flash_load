@@ -4,7 +4,7 @@ import sys
 import serial
 import logging
 from typing import Literal
-from threading import Event
+from threading import Event, Thread
 from queue import Queue
 
 from serial_commport.Pamir_serial_basic import PamirSerial
@@ -31,7 +31,7 @@ class FlashLoad(PamirSerial):
     def __init__(self, serialport=None, timeout=1.0):
         super().__init__(self, serialport, timeout)
         self.bitstream: list[bytes] = []
-        self.load_image_type: Literal["golden", "operation"] = None
+        self.operation_thread: Thread = None
 
     @staticmethod
     def read_binary_to_hex(filename, max_bytes=FLASH_PAGE_SIZE) -> dict:
@@ -84,30 +84,32 @@ class FlashLoad(PamirSerial):
                 "status": False,
                 "msg": f"Error: File too large ({file_size} bytes). Max allowed is {IMAGE_MAX_SIZE_BYTES} bytes.",
             }
-        print(f"Size of the file: {file_size} bytes")
 
         return_dict = self.read_binary_to_hex(file_name)
         if not return_dict["status"]:
             return return_dict
-        else:
-            # check syncronisation code "AA995566" exists, etc.,
-            whole_file_string = "".join(return_dict["data"])
-            if whole_file_string.lower().find(FPGA_BITSTREAM_SYNC_WORD.lower()) == -1:
-                return {
-                    "status": False,
-                    "msg": f"Missing synchronisation code {FPGA_BITSTREAM_SYNC_WORD}.",
-                }
 
-            if (
-                whole_file_string.lower().find(FPGA_BITSTREAM_IDCODE[fpga_type].lower())
-                == -1
-            ):
-                return {
-                    "status": False,
-                    "msg": f"Missing synchronisation code {FPGA_BITSTREAM_SYNC_WORD}.",
-                }
-            self.bitstream: list[bytes] = return_dict["bin_data"]
-            return return_dict
+        return_dict["msg"] = f"Size of the file: {file_size} bytes"
+        logging.debug(return_dict["msg"])
+
+        # check syncronisation code "AA995566" exists, etc.,
+        whole_file_string = "".join(return_dict["data"])
+        if whole_file_string.lower().find(FPGA_BITSTREAM_SYNC_WORD.lower()) == -1:
+            return {
+                "status": False,
+                "msg": f"Missing synchronisation code {FPGA_BITSTREAM_SYNC_WORD}.",
+            }
+
+        if (
+            whole_file_string.lower().find(FPGA_BITSTREAM_IDCODE[fpga_type].lower())
+            == -1
+        ):
+            return {
+                "status": False,
+                "msg": f"Missing FPGA id code {FPGA_BITSTREAM_IDCODE[fpga_type]}.",
+            }
+        self.bitstream: list[bytes] = return_dict["bin_data"]
+        return return_dict
 
     def write_image_to_flash(
         self,
@@ -116,10 +118,10 @@ class FlashLoad(PamirSerial):
         status_queue: Queue = None,
     ):
         return_dict = {"status": True, "msg": None}
-        if not hasattr(self, "bitstream"):
+        if not self.bitstream:
             return_dict["status"] = False
             return_dict["msg"] = "Valid bitstream is not loaded."
-            if status_queue is not None:
+            if isinstance(status_queue, Queue):
                 status_queue.put(return_dict)
             return return_dict
 
@@ -133,24 +135,24 @@ class FlashLoad(PamirSerial):
         else:
             return_dict["status"] = False
             return_dict["msg"] = "Invalid image_type. Use 'golden' or 'operation'."
-            if status_queue is not None:
+            if isinstance(status_queue, Queue):
                 status_queue.put(return_dict)
             return return_dict
 
         # Erase loop
         return_dict["msg"] = "Erasing sectors ..."
-        logging.info(return_dict["msg"])
-        if status_queue is not None:
+        logging.debug(return_dict["msg"])
+        if isinstance(status_queue, Queue):
             status_queue.put(return_dict)
 
         for erase_addr in range(base_address, max_address, FLASH_SECTOR_SIZE):
             return_dict["msg"] = f"Erasing sector at 0x{erase_addr:08X}"
-            logging.info(return_dict["msg"])
+            logging.debug(return_dict["msg"])
 
             if "progress" in events:
                 event_progress: Event = events["progress"]
                 if event_progress.is_set():
-                    if status_queue is not None:
+                    if isinstance(status_queue, Queue):
                         status_queue.put(return_dict)
                     event_progress.clear()
 
@@ -158,7 +160,7 @@ class FlashLoad(PamirSerial):
                 event_pause: Event = events["pause"]
                 if event_pause.is_set():
                     return_dict["msg"] = "Erase operation paused."
-                    if status_queue is not None:
+                    if isinstance(status_queue, Queue):
                         status_queue.put(return_dict)
                     event_pause.wait()
 
@@ -167,7 +169,7 @@ class FlashLoad(PamirSerial):
                 if event_abort.is_set():
                     return_dict["status"] = False
                     return_dict["msg"] = "Erase operation aborted by user."
-                    if status_queue is not None:
+                    if isinstance(status_queue, Queue):
                         status_queue.put(return_dict)
                     return return_dict
 
@@ -181,21 +183,21 @@ class FlashLoad(PamirSerial):
             except TimeoutError:
                 return_dict["status"] = False
                 return_dict["msg"] = "Flash stays busy for > 10 s, aborting"
-                if status_queue is not None:
+                if isinstance(status_queue, Queue):
                     status_queue.put(return_dict)
                 return return_dict
             except Exception as e:
-                print(f"Erase failed at {hex(erase_addr)}: {e}")
+                logging.error(f"Erase failed at {hex(erase_addr)}: {e}")
                 return_dict["status"] = False
                 return_dict["msg"] = f"Erase error at 0x{erase_addr:08X}"
-                if status_queue is not None:
+                if isinstance(status_queue, Queue):
                     status_queue.put(return_dict)
                 return return_dict
 
         # Write loop
         return_dict["msg"] = "Writing data pages..."
-        logging.info(return_dict["msg"])
-        if status_queue is not None:
+        logging.debug(return_dict["msg"])
+        if isinstance(status_queue, Queue):
             status_queue.put(return_dict)
 
         write_addr = base_address
@@ -203,11 +205,11 @@ class FlashLoad(PamirSerial):
             return_dict["msg"] = (
                 f"Writing page {idx + 1}/{len(self.bitstream)} at 0x{write_addr:08X}"
             )
-            logging.info(return_dict["msg"])
+            logging.debug(return_dict["msg"])
             if "progress" in events:
                 event_progress: Event = events["progress"]
                 if event_progress.is_set():
-                    if status_queue is not None:
+                    if isinstance(status_queue, Queue):
                         status_queue.put(return_dict)
                     event_progress.clear()
 
@@ -215,7 +217,7 @@ class FlashLoad(PamirSerial):
                 event_pause: Event = events["pause"]
                 if event_pause.is_set():
                     return_dict["msg"] = "Write operation paused."
-                    if status_queue is not None:
+                    if isinstance(status_queue, Queue):
                         status_queue.put(return_dict)
                     event_pause.wait()
 
@@ -224,14 +226,14 @@ class FlashLoad(PamirSerial):
                 if event_abort.is_set():
                     return_dict["status"] = False
                     return_dict["msg"] = "Write operation aborted by user."
-                    if status_queue is not None:
+                    if isinstance(status_queue, Queue):
                         status_queue.put(return_dict)
                     return return_dict
 
             if write_addr >= max_address:
                 return_dict["status"] = False
                 return_dict["msg"] = "Warning: Write exceeds assigned flash region."
-                if status_queue is not None:
+                if isinstance(status_queue, Queue):
                     status_queue.put(return_dict)
                 return return_dict
 
@@ -252,14 +254,15 @@ class FlashLoad(PamirSerial):
             except TimeoutError:
                 return_dict["status"] = False
                 return_dict["msg"] = "Flash stays busy for > 10 s, aborting"
-                if status_queue is not None:
+                logging.error(return_dict["msg"])
+                if isinstance(status_queue, Queue):
                     status_queue.put(return_dict)
                 return return_dict
             except Exception as e:
-                print(f"Write failed at {hex(write_addr)}: {e}")
                 return_dict["status"] = False
-                return_dict["msg"] = f"Write error at 0x{write_addr:08X}"
-                if status_queue is not None:
+                return_dict["msg"] = f"Write error at 0x{write_addr:08X}, {str(e)}"
+                logging.error(return_dict["msg"])
+                if isinstance(status_queue, Queue):
                     status_queue.put(return_dict)
                 return return_dict
 
@@ -267,35 +270,50 @@ class FlashLoad(PamirSerial):
 
         self.flash_write_disable()
         return_dict["msg"] = "Successfully written to flash."
-        if status_queue is not None:
+        logging.debug(return_dict["msg"])
+        if isinstance(status_queue, Queue):
             status_queue.put(return_dict)
         return return_dict
 
     def read_image_from_flash(
         self,
         image_type: Literal["golden", "operation"],
+        length: int = 0,
         events: dict[str:Event] = None,
         status_queue: Queue = None,
     ):
         return_dict = {"status": True, "msg": None}
+        read_length = length if length > 0 else IMAGE_MAX_SIZE_BYTES
+        read_length = (
+            FLASH_PAGE_SIZE
+            if (read_length // FLASH_PAGE_SIZE) == 0
+            else (read_length // FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE
+        )  # Round down to full pages
+        if read_length != length:
+            return_dict["msg"] = "Read flash length rounded down to full pages."
+            logging.debug(return_dict["msg"])
+            if isinstance(status_queue, Queue):
+                status_queue.put(return_dict)
+
         if image_type == "golden":
             base_address = FLASH_ADDRBASE_GOLDEN
-            max_address = FLASH_ADDRBASE_GOLDEN + IMAGE_MAX_SIZE_BYTES - 1
+            max_address = FLASH_ADDRBASE_GOLDEN + read_length - 1
         elif image_type == "operation":
             base_address = FLASH_ADDRBASE_OPERATION
-            max_address = FLASH_ADDRBASE_OPERATION + IMAGE_MAX_SIZE_BYTES - 1
+            max_address = FLASH_ADDRBASE_OPERATION + read_length - 1
         else:
             return_dict = {
                 "status": False,
                 "msg": "Invalid image_type. Use 'golden' or 'operation'.",
             }
-            if status_queue is not None:
+            logging.error(return_dict["msg"])
+            if isinstance(status_queue, Queue):
                 status_queue.put(return_dict)
             return return_dict
 
         return_dict["msg"] = "Reading flash pages..."
-        logging.info(return_dict["msg"])
-        if status_queue is not None:
+        logging.debug(return_dict["msg"])
+        if isinstance(status_queue, Queue):
             status_queue.put(return_dict)
 
         read_addr = base_address
@@ -304,13 +322,13 @@ class FlashLoad(PamirSerial):
         idx = 0
         while read_addr < max_address:
             return_dict["msg"] = (
-                f"Reading page {idx + 1}/{len(self.bitstream)} at 0x{read_addr:08X}"
+                f"Reading page {idx + 1}/{read_length // FLASH_PAGE_SIZE} at 0x{read_addr:08X}"
             )
-            logging.info(return_dict["msg"])
+            logging.debug(return_dict["msg"])
             if "progress" in events:
                 event_progress: Event = events["progress"]
                 if event_progress.is_set():
-                    if status_queue is not None:
+                    if isinstance(status_queue, Queue):
                         status_queue.put(return_dict)
                     event_progress.clear()
 
@@ -318,7 +336,7 @@ class FlashLoad(PamirSerial):
                 event_pause: Event = events["pause"]
                 if event_pause.is_set():
                     return_dict["msg"] = "Write operation paused."
-                    if status_queue is not None:
+                    if isinstance(status_queue, Queue):
                         status_queue.put(return_dict)
                     event_pause.wait()
 
@@ -327,22 +345,93 @@ class FlashLoad(PamirSerial):
                 if event_abort.is_set():
                     return_dict["status"] = False
                     return_dict["msg"] = "Write operation aborted by user."
-                    if status_queue is not None:
+                    if isinstance(status_queue, Queue):
                         status_queue.put(return_dict)
                     return return_dict
             try:
                 page = self.flash_read(read_addr)
                 list_byte.extend(page)
                 str_hex_page = "".join(f"{b:02x}" for b in page)
-                print(
+                logging.debug(
                     f"Read 256B page from 0x{read_addr:08X}, 0x{str_hex_page}"
                 )  # print the address and data
             except Exception as e:
-                print(f" Read failed at 0x{read_addr:08X}: {e}")
+                logging.error(f" Read failed at 0x{read_addr:08X}: {e}")
                 return {"status": False, "msg": f"Read error at {hex(read_addr)}"}
 
             read_addr += FLASH_PAGE_SIZE
             idx += 1
+        return_dict["msg"] = f"Read {len(list_byte)} bytes from flash successfully."
+        logging.debug(return_dict["msg"])
+        return_dict["data"] = list_byte
+        return return_dict
+
+    def init_flash_operation(
+        self,
+        image_type: Literal["golden", "operation"],
+        operation_type: Literal["write", "read"],
+        events: dict[str:Event] = None,
+        status_queue: Queue = None,
+    ):
+        if (
+            isinstance(self.operation_thread, Thread)
+            and self.operation_thread.is_alive()
+        ):
+            raise RuntimeError(
+                "An operation is already in progress. Please check flash operation status."
+            )
+        if operation_type not in ["write", "read"]:
+            raise ValueError("Invalid operation_type. Use 'write' or 'read'.")
+        if events is None:
+            events = {
+                "progress": Event(),
+                "pause": Event(),
+                "abort": Event(),
+            }
+        if not isinstance(status_queue, Queue):
+            status_queue = Queue()
+        if operation_type == "write":
+            self.operation_thread = self.write_image_to_flash(
+                image_type, events, status_queue
+            )
+        elif operation_type == "read":
+            self.operation_thread = self.read_image_from_flash(
+                image_type, events, status_queue
+            )
+        else:
+            raise ValueError("Invalid operation_type. Use 'write' or 'read'.")
+        self.operation_thread.start()
+        return events, status_queue
+
+    def flash_operation_status(
+        self,
+        events: dict[str:Event],
+        status_queue: Queue,
+        status_check_timeout: float = 0.5,
+    ) -> list[dict]:
+        if self.operation_thread is None:
+            return [{"status": False, "msg": "No flash operation running."}]
+        if not status_queue.empty():
+            status_queue_list = []
+            while not status_queue.empty():
+                status_queue_list.append(status_queue.get())
+            if not self.operation_thread.is_alive():
+                status_queue_list.append(
+                    {"status": True, "msg": "Flash operation completed."}
+                )
+                self.operation_thread = None
+            return status_queue_list
+        elif self.operation_thread.is_alive():
+            events["progress"].set()
+            tic = time.time()
+            while time.time() - tic < status_check_timeout:
+                if not status_queue.empty():
+                    return [status_queue.get()]
+                time.sleep(0.01)
+            return [{"status": True, "msg": "Status check timeout."}]
+        else:
+            self.operation_thread = None
+            return [{"status": False, "msg": "No flash operation running."}]
 
     # def save_read_image(
     #     self,
