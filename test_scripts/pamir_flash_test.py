@@ -9,11 +9,11 @@ sys.path.insert(
 from flash_load import FlashLoad
 
 def main():
-    filename = "pamir_comms_test.py"
+    #filename = "pamir_comms_test.py"
 
     serial_port = serial.Serial('/dev/ttyS0', 230400, timeout=2)
-    flash_load = FlashLoad(serialport=serial_port, timeout=1)
-    flash_load.load_bitstream_file(file_name=filename)
+    #flash_load = FlashLoad(serialport=serial_port, timeout=1)
+    #flash_load.load_bitstream_file(file_name=filename)
     
     data = f".SpiFshEr 0x00000000\n" 
     serial_port.write(bytes(data, 'utf-8'))
@@ -21,13 +21,13 @@ def main():
     while time.time() < tic + 5:
         print(f"ack from microblaze Erase: {serial_port.readline()}")
         time.sleep(1)
-    data = f".SpiFshRd 0x00000000\n" 
-    serial_port.write(bytes(data, 'utf-8'))
-    tic = time.time()
-    while time.time() < tic + 5:
-        print(f"ack from microblaze Read after Erase: {serial_port.readline()}")
-        time.sleep(1)
-    data = f".SpiFshWr 0x00000000 0x{hex_output}\n" 
+    #data = f".SpiFshRd 0x00000000\n" 
+    #serial_port.write(bytes(data, 'utf-8'))
+    #tic = time.time()
+    #while time.time() < tic + 5:
+    #    print(f"ack from microblaze Read after Erase: {serial_port.readline()}")
+    #    time.sleep(1)
+    data = f".SpiFshWr 0x00000000 0x12341234200000002000000020000000300020010000000030008001000000012000000030004000503d0da6000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n" 
     serial_port.write(bytes(data, 'utf-8'))
     tic = time.time()
     while time.time() < tic + 5:
