@@ -329,6 +329,7 @@ class FlashLoad(PamirSerial):
         return_dict["msg"] = f"Read {len(list_byte)} bytes from flash successfully."
         logging.debug(return_dict["msg"])
         return_dict["data"] = list_byte
+        self.status_queue.put(return_dict)
         return return_dict
 
     def init_flash_operation(
@@ -351,7 +352,9 @@ class FlashLoad(PamirSerial):
         if operation_type not in ["write", "read"]:
             raise ValueError("Invalid operation_type. Use 'write' or 'read'.")
         if operation_type == "write":
-            self.operation_thread = Thread(target=self.write_image_to_flash, args=(image_type,))
+            self.operation_thread = Thread(
+                target=self.write_image_to_flash, args=(image_type,)
+            )
         elif operation_type == "read":
             self.operation_thread = Thread(
                 target=self.read_image_from_flash, args=(image_type, read_length)
