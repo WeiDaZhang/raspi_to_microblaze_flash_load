@@ -272,10 +272,10 @@ class FlashLoad(PamirSerial):
 
         if image_type == "golden":
             base_address = FLASH_ADDRBASE_GOLDEN
-            max_address = FLASH_ADDRBASE_GOLDEN + read_length - 1
+            max_address = FLASH_ADDRBASE_GOLDEN + read_length
         elif image_type == "operation":
             base_address = FLASH_ADDRBASE_OPERATION
-            max_address = FLASH_ADDRBASE_OPERATION + read_length - 1
+            max_address = FLASH_ADDRBASE_OPERATION + read_length
         else:
             return_dict = {
                 "status": False,
@@ -390,6 +390,47 @@ class FlashLoad(PamirSerial):
         else:
             self.operation_thread = None
             return [{"status": False, "msg": "No flash operation running."}]
+
+
+def command_loop(fl: FlashLoad,status_check_timeout: float = 0.5):
+    help_text = "Commands:  progress  pause  resume  abort  quit"
+    print(help_text)
+
+    while True:
+        cmd = input("> ").strip().lower()
+
+        # progress
+        if cmd == "progress":
+            fl.events["progress"].set()
+            msgs = fl.flash_operation_status(status_check_timeout)
+            for msg in msgs:
+                if "data" in msg:
+                    print(f"{msg['msg']}  {msg['data']}")
+                else:
+                    print(msg["msg"])
+            continue
+
+        # pause and resume
+        if cmd == "pause":
+            fl.events["pause"].set()
+            print("Pause requested.")
+            continue
+
+        if cmd == "resume":
+            fl.events["pause"].clear()
+            continue
+
+        # abort
+        if cmd == "abort":
+            fl.events["abort"].set()
+            print("Abort requested.")
+            continue
+
+        # exit
+        if cmd == "exit":
+            break
+
+        print(help_text)
 
     # def save_read_image(
     #     self,

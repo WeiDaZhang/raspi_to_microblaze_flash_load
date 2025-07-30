@@ -32,6 +32,4 @@ print(f"Result:{load_result['status']}, {load_result['msg']}")
 # print(f"Result:{wr['status']}, {wr['msg']}")
 
 fl.init_flash_operation("operation", "read", 257)
-while True:
-    print(fl.flash_operation_status())
-    time.sleep(0.01)
+command_loop(fl)
