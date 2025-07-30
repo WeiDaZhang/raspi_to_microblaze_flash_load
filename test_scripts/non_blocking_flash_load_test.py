@@ -4,7 +4,7 @@ import serial
 import time
 import logging
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+#sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from flash_load import FlashLoad
 
@@ -31,7 +31,7 @@ print(f"Result:{load_result['status']}, {load_result['msg']}")
 # wr = fl.write_image_to_flash("operation")
 # print(f"Result:{wr['status']}, {wr['msg']}")
 
-fl.init_flash_operation("operation", "write")
+fl.init_flash_operation("operation", "read", 257)
 while True:
     print(fl.flash_operation_status())
     time.sleep(0.01)

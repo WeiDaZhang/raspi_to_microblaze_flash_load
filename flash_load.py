@@ -7,7 +7,7 @@ from typing import Literal
 from threading import Event, Thread
 from queue import Queue
 
-from serial_commport.Pamir_serial_basic import PamirSerial
+from serialcommport.Pamir_serial_basic import PamirSerial
 
 # It turns out "flash_erase", "flash_write", "flash_read" has been provided by [Meenu S]
 # You would want to override them and potentially encapsulate them
@@ -29,7 +29,7 @@ ALLOW_EXTS = [".bin"]
 
 class FlashLoad(PamirSerial):
     def __init__(self, serialport=None, timeout=1.0):
-        super().__init__(self, serialport, timeout)
+        super().__init__(serialport, timeout)
         self.bitstream: list[bytes] = []
         self.operation_thread: Thread = None
         self.events = {
@@ -351,10 +351,10 @@ class FlashLoad(PamirSerial):
         if operation_type not in ["write", "read"]:
             raise ValueError("Invalid operation_type. Use 'write' or 'read'.")
         if operation_type == "write":
-            self.operation_thread = Thread(self.write_image_to_flash, image_type)
+            self.operation_thread = Thread(target=self.write_image_to_flash, args=(image_type,))
         elif operation_type == "read":
             self.operation_thread = Thread(
-                self.read_image_from_flash, (image_type, read_length)
+                target=self.read_image_from_flash, args=(image_type, read_length)
             )
         else:
             raise ValueError("Invalid operation_type. Use 'write' or 'read'.")
