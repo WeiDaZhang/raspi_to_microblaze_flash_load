@@ -32,4 +32,4 @@ print(f"Result:{load_result['status']}, {load_result['msg']}")
 # print(f"Result:{wr['status']}, {wr['msg']}")
 
 fl.init_flash_operation("operation", "read", 257)
-command_loop(fl)
+fl.command_loop()
