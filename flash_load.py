@@ -256,7 +256,7 @@ class FlashLoad(PamirSerial):
     def read_image_from_flash(
         self,
         image_type: Literal["golden", "operation"],
-        length: int = 512,  # Length in bytes, 0 means maximum image size
+        length: int = 0,  # Length in bytes, 0 means maximum image size
     ):
         return_dict = {"status": True, "msg": None}
         read_length = (
@@ -357,11 +357,11 @@ class FlashLoad(PamirSerial):
             raise ValueError("Invalid operation_type. Use 'write' or 'read'.")
         if operation_type == "write":
             self.operation_thread = Thread(
-                target=self.write_image_to_flash, args=(image_type,)
+                target=self.write_image_to_flash, args=(image_type,), daemon=True
             )
         elif operation_type == "read":
             self.operation_thread = Thread(
-                target=self.read_image_from_flash, args=(image_type, read_length)
+                target=self.read_image_from_flash, args=(image_type, read_length), daemon=True
             )
         else:
             raise ValueError("Invalid operation_type. Use 'write' or 'read'.")
@@ -378,12 +378,11 @@ class FlashLoad(PamirSerial):
             while not self.status_queue.empty():
                 status_queue_list.append(self.status_queue.get())
             if not self.operation_thread.is_alive():
-                status_queue_list.append(
-                    {"status": True, "msg": "Flash operation completed."}
-                )
                 self.operation_thread = None
             return status_queue_list
         elif self.operation_thread.is_alive():
+            if self.events["pause"].is_set():
+                return [{"status": True, "msg": "Operation paused."}]
             self.events["progress"].set()
             tic = time.time()
             while time.time() - tic < status_check_timeout:
