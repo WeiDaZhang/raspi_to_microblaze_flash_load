@@ -37,9 +37,7 @@ class FlashLoad(PamirSerial):
             "pause": Event(),
             "abort": Event(),
         }
-        self.events["pause"].set()
         self.status_queue = Queue()
-
 
     @staticmethod
     def read_binary_to_hex(filename, max_bytes=FLASH_PAGE_SIZE) -> dict:
@@ -156,10 +154,11 @@ class FlashLoad(PamirSerial):
                 self.status_queue.put(return_dict.copy())
                 self.events["progress"].clear()
 
-            if not self.events["pause"].is_set():
+            if self.events["pause"].is_set():
                 return_dict["msg"] = "Erase operation paused."
                 self.status_queue.put(return_dict.copy())
-                self.events["pause"].wait()
+                while self.events["pause"].is_set():
+                    time.sleep(0.1)
 
             if self.events["abort"].is_set():
                 return_dict["status"] = False
@@ -201,10 +200,11 @@ class FlashLoad(PamirSerial):
                 self.status_queue.put(return_dict.copy())
                 self.events["progress"].clear()
 
-            if not self.events["pause"].is_set():
+            if self.events["pause"].is_set():
                 return_dict["msg"] = "Write operation paused."
                 self.status_queue.put(return_dict.copy())
-                self.events["pause"].wait()
+                while self.events["pause"].is_set():
+                    time.sleep(0.1)
 
             if self.events["abort"].is_set():
                 return_dict["status"] = False
@@ -305,10 +305,11 @@ class FlashLoad(PamirSerial):
                 self.status_queue.put(return_dict.copy())
                 self.events["progress"].clear()
 
-            if  not self.events["pause"].is_set():
+            if self.events["pause"].is_set():
                 return_dict["msg"] = "Read operation paused."
                 self.status_queue.put(return_dict.copy())
-                self.events["pause"].wait()
+                while self.events["pause"].is_set():
+                    time.sleep(0.1)
 
             if self.events["abort"].is_set():
                 return_dict["status"] = False
@@ -323,17 +324,15 @@ class FlashLoad(PamirSerial):
                 logging.debug(
                     f"Read 256B page from 0x{read_addr:08X}, 0x{str_hex_page}"
                 )  # print the address and data
-                return_dict["msg"] = f"Read 256B page from 0x{read_addr:08X}, 0x{str_hex_page}"
-                self.status_queue.put(return_dict.copy())
             except Exception as e:
                 logging.error(f" Read failed at 0x{read_addr:08X}: {e}")
                 return {"status": False, "msg": f"Read error at {hex(read_addr)}"}
-
 
             read_addr += FLASH_PAGE_SIZE
             idx += 1
         return_dict["msg"] = f"Read {len(list_byte)} bytes from flash successfully."
         logging.debug(return_dict["msg"])
+        return_dict["data"] = list_byte
         self.status_queue.put(return_dict.copy())
         return return_dict
 
@@ -396,43 +395,31 @@ class FlashLoad(PamirSerial):
             self.operation_thread = None
             return [{"status": False, "msg": "No flash operation running."}]
 
-    def command_loop(self, status_check_timeout: float = 0.5) -> None:
-        help_text = "Commands:  progress  pause  resume  abort  quit/exit"
-        print(help_text)
+    def set_flash_operation_pause(self) -> None:
+        if not self.events["pause"].is_set():
+            self.events["pause"].set()
+            logging.debug("Flash operation paused.")
+        else:
+            logging.debug("Flash operation is already paused.")
 
-        while True:
-            cmd = input("> ").strip().lower()
+    def set_flash_operation_resume(self) -> None:
+        if not self.events["pause"].is_set():
+            logging.debug("Flash operation is already running.")
+        else:
+            self.events["pause"].clear()
+            logging.debug("Flash operation resumed.")
 
-            # ---------- progress ----------
-            if cmd == "progress":
-                #self.events["progress"].set()
-                for msg in self.flash_operation_status(status_check_timeout):
-                    print(msg["msg"])
-                continue
-
-            # ---------- pause / resume ----------
-            if cmd == "pause":
-                self.events["pause"].clear()
-                print("Pause requested.")
-                continue
-
-            if cmd == "resume":
-                self.events["pause"].set()
-                print("Resume requested.")
-                continue
-
-            # ---------- abort ----------
-            if cmd == "abort":
-                self.events["abort"].set()
-                print("Abort requested.")
-                continue
-
-            # ---------- quit ----------
-            if cmd in {"quit", "exit"}:
-                break
-
-            print(help_text)
-
+    def set_flash_operation_abort(self) -> None:
+        if self.operation_thread is None:
+            logging.debug("No flash operation running.")
+            return
+        if not self.operation_thread.is_alive():
+            logging.debug("Flash operation is not running.")
+            return
+        if self.events["pause"].is_set():
+            self.events["pause"].clear()
+        self.events["abort"].set()
+        logging.debug("Flash operation aborted by user.")
 
     # def save_read_image(
     #     self,
