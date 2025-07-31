@@ -17,7 +17,7 @@ FLASH_ADDRBASE_GOLDEN = 0x00000000
 FLASH_ADDRBASE_OPERATION = 0x01000000
 IMAGE_MAX_SIZE_BYTES = FLASH_ADDRBASE_OPERATION
 FLASH_WIP_TIMEOUT_SEC = 10.0
-FLASH_POLL_INTERVAL_SEC = 0.01
+FLASH_POLL_INTERVAL_SEC = 0.001
 FPGA_BITSTREAM_SYNC_WORD = (
     "AA995566"  # 4 bytes sync word at the start of the bitstream file
 )
@@ -361,7 +361,9 @@ class FlashLoad(PamirSerial):
             )
         elif operation_type == "read":
             self.operation_thread = Thread(
-                target=self.read_image_from_flash, args=(image_type, read_length), daemon=True
+                target=self.read_image_from_flash,
+                args=(image_type, read_length),
+                daemon=True,
             )
         else:
             raise ValueError("Invalid operation_type. Use 'write' or 'read'.")
