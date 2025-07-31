@@ -12,9 +12,10 @@ PORT = "/dev/ttyS0"
 BAUD = 230400
 
 BITSTREAM_FILE = "11B_operation_0362905b6d789a_981735f482b6d4_download.bin"
+#BITSTREAM_FILE = "fake_operation.bin"
 
 logging.basicConfig(
-    level=logging.DEBUG,  # Set the logging level to DEBUG
+    level=logging.INFO,  # Set the logging level to DEBUG
     format="%(asctime)s - %(levelname)s - %(message)s",  # Optional format
 )
 
@@ -43,6 +44,7 @@ def command_loop(fl: FlashLoad, status_check_timeout: float = 0.5) -> None:
             fl.init_flash_operation(
                 operation_type="read",
                 image_type="operation",
+                read_length = 513
             )
 
         # ---------- progress ----------
@@ -50,6 +52,8 @@ def command_loop(fl: FlashLoad, status_check_timeout: float = 0.5) -> None:
             # self.events["progress"].set()
             for msg in fl.flash_operation_status(status_check_timeout):
                 print(msg["msg"])
+                if "data" in msg:
+                    print(msg["data"])
             continue
 
         # ---------- pause / resume ----------
